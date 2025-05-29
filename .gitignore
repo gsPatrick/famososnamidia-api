@@ -1,0 +1,18 @@
+# Ignorar dependências do Node
+node_modules/
+
+# Ignorar arquivos de log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignorar arquivos do ambiente
+.env
+
+# Ignorar diretórios temporários
+dist/
+build/
+.tmp/
+
+# Outras pastas que costumam ser geradas
+coverage/
