@@ -1,14 +1,17 @@
+
 // src/app.js (no backend)
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const allRoutes = require('./src/routes/index.routes'); // Ajuste o caminho se sua pasta src estiver em outro nível (parece correto)
-// const db = require('./models'); // Ajuste o caminho (importado apenas em server.js agora)
-const configModule = require('./src/config/config'); // Renomeado para evitar conflito com a variável 'config'
 const path = require('path');
 
-// Carrega variáveis de .env para process.env - Deve ser feito ANTES de carregar módulos que dependem delas
+// Carrega variáveis de .env para process.env o mais cedo possível
 dotenv.config(); 
+
+// Importa configurações e outros módulos APÓS carregar .env
+const configModule = require('./src/config/config'); 
+const allRoutes = require('./src/routes/index.routes'); 
+const db = require('./src/models'); 
 
 const app = express();
 
@@ -32,20 +35,14 @@ app.use(express.json());
 
 app.use(express.urlencoded({ extended: true }));
 
-// <<< ADICIONAR PARA SERVIR ARQUIVOS ESTÁTICOS >>>
-// Isso tornará os arquivos dentro da pasta 'public' acessíveis via URL
-// Ex: se você salvar uma imagem em 'public/uploads/images/nome-da-imagem.jpg',
-// ela estará acessível em 'http://localhost:3001/uploads/images/nome-da-imagem.jpg'
-// O '/static' é opcional, se omitido, o caminho seria direto: '/uploads/images/...'
-// Usarei '/static' para deixar claro que são arquivos estáticos, mas você pode remover se preferir.
-// app.use('/static', express.static(path.join(__dirname, 'public')));
-// VOU OPTAR POR NÃO USAR /static no prefixo da URL para simplificar a URL final da imagem
-app.use(express.static(path.join(__dirname, '..', 'public'))); // <<< Ajuste de caminho relativo
+// Serve arquivos estáticos da pasta 'public'
+// Ex: http://localhost:3001/uploads/images/nome.jpg
+app.use(express.static(path.join(__dirname, 'public'))); 
 
 // Rotas
-app.use('/api/v1', allRoutes); // Monta todas as rotas da API sob '/api/v1' - Ajustado para usar o prefixo em um lugar central
+app.use('/', allRoutes); // Monta todas as rotas da API
 
-// Rota de Teste (mantida como exemplo, pode ser removida se não precisar)
+// Rota de Teste
 app.get('/', (req, res) => {
   res.send('Servidor do Blog Famosos na Mídia está no ar!');
 });
@@ -53,44 +50,54 @@ app.get('/', (req, res) => {
 // Middleware de Tratamento de Erros Genérico
 app.use((err, req, res, next) => {
   console.error("ERRO NÃO TRATADO:", err.stack);
-  
-  // Tratamento de erros específicos do Multer
-  if (err.name === 'MulterError') { 
-    return res.status(400).json({ message: `Erro de upload: ${err.message}. Código: ${err.code}` });
+  if (err.name === 'MulterError') { // Tratamento específico para erros do Multer
+    // Erros do Multer como 'LIMIT_FILE_SIZE' ou 'LIMIT_UNEXPECTED_FILE'
+    let message = `Erro de upload: ${err.message}.`;
+    if (err.code) message += ` Código: ${err.code}`;
+    return res.status(400).json({ message });
   }
-  
-  // Inclui validações SequelizeErrors (mais detalhado)
-  if (err.name === 'SequelizeValidationError') {
-      const messages = err.errors.map(e => e.message).join(', ');
-      return res.status(400).json({ message: `Erro de validação: ${messages}` });
-  }
-   if (err.name === 'SequelizeUniqueConstraintError') {
-       const messages = err.errors.map(e => `${e.path}: ${e.message}`).join(', '); // Inclui o campo do erro
-       return res.status(400).json({ message: `Erro de duplicidade: ${messages}` });
-   }
-   if (err.name === 'SequelizeForeignKeyConstraintError') {
-        // Tenta extrair detalhes do erro original do DB se disponível
-        const detail = err.parent && err.parent.detail ? err.parent.detail : err.message;
-        return res.status(400).json({ message: `Erro de chave estrangeira: ${detail}` });
-   }
-   if (err.message && err.message.includes('não encontrado')) {
-        return res.status(404).json({ message: err.message });
-   }
-    if (err.message && err.message.includes('Não autorizado') || err.message.includes('negado')) {
-        return res.status(403).json({ message: err.message });
-   }
-    if (err.message && err.message.includes('Email ou senha inválidos')) {
-        return res.status(401).json({ message: err.message });
-    }
-
-
-  // Resposta genérica para outros erros não tratados
+  // Outros erros
   res.status(500).json({ message: 'Ocorreu um erro inesperado no servidor.' });
 });
 
+// Função para sincronizar o banco de dados
+const syncDatabase = async () => {
+  try {
+    // Sincroniza todos os modelos. Use { alter: true } em dev para evitar perda de dados
+    // ou { force: true } em dev se quiser dropar e recriar tabelas a cada execução.
+    // NUNCA use { force: true } em produção!
+    await db.sequelize.sync({ alter: process.env.NODE_ENV === 'development' });
+    console.log('Banco de dados sincronizado com sucesso.');
+  } catch (error) {
+    console.error('Erro ao sincronizar o banco de dados:', error);
+    // Em um ambiente de produção, você pode querer parar o servidor se o DB não sincronizar
+    // process.exit(1); 
+  }
+};
 
-// <<< REMOVER CHAMADAS DE syncDatabase() E app.listen() AQUI >>>
-// Estas foram movidas para server.js, que é o ponto de entrada.
-// Apenas configuramos o aplicativo Express e o exportamos.
+// Função para iniciar o servidor
+const startServer = async () => {
+    // Sincroniza o banco de dados ANTES de iniciar o servidor
+    await syncDatabase(); 
 
+    const PORT = configModule.port || 3001;
+
+    app.listen(PORT, () => {
+      console.log(`Servidor rodando na porta ${PORT} no ambiente ${configModule.nodeEnv}`);
+      
+      // Verifica se o JWT_SECRET está definido
+      if (!configModule.jwtSecret) {
+          console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+          console.error("ERRO DE CONFIGURAÇÃO: JWT_SECRET não está definido!");
+          console.error("Por favor, defina a variável JWT_SECRET no seu arquivo .env");
+          console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+          // Em produção, você pode querer parar o processo aqui: process.exit(1);
+      }
+    });
+};
+
+// Inicia a aplicação (sincroniza DB e depois inicia o servidor)
+startServer();
+
+// Exporta a instância do app (útil para testes, por exemplo)
 module.exports = app;
