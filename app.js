@@ -1,79 +1,65 @@
-// src/app.js (no backend)
-const express = require('express');
-const cors = require('cors');
-const dotenv = require('dotenv');
-const allRoutes = require('./src/routes/index.routes'); // Ajuste o caminho se sua pasta src estiver em outro nível
-const db = require('./src/models'); // Ajuste o caminho
-const configModule = require('./src/config/config'); // Renomeado para evitar conflito com a variável 'config'
-const path = require('path');
-dotenv.config(); // Carrega variáveis de .env para process.env
+// src/server.js
+// Este arquivo deve ser o ÚNICO ponto de inicialização do servidor Express
+const app = require('./app'); // Importa o aplicativo configurado em app.js
+const db = require('./src/models'); // Importa o módulo de modelos para acesso ao sequelize
+const config = require('./src/config/config'); // Importa as configurações
 
-const app = express();
+const PORT = config.port || 3001; // Usa a porta da configuração, padrão 3001
 
-// Middlewares
-// Configuração de CORS
-// PARA LIBERAR PARA QUALQUER ENDEREÇO:
-app.use(cors()); // Isso permite TODAS as origens ('*') por padrão.
-                 // ATENÇÃO: Para produção, é mais seguro especificar as origens permitidas.
-
-// Configuração anterior (com origem específica, mantida comentada para referência):
-/*
-app.use(cors({
-  origin: 'http://localhost:5175', // Permite requisições desta origem específica
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], // Métodos permitidos
-  allowedHeaders: ['Content-Type', 'Authorization'], // Cabeçalhos permitidos
-  credentials: true // Se você for usar cookies ou sessões baseadas em cabeçalhos de autorização
-}));
-*/
-
-app.use(express.json());
-
-app.use(express.urlencoded({ extended: true }));
-
-// <<< ADICIONAR PARA SERVIR ARQUIVOS ESTÁTICOS >>>
-// Isso tornará os arquivos dentro da pasta 'public' acessíveis via URL
-// Ex: se você salvar uma imagem em 'public/uploads/images/nome-da-imagem.jpg',
-// ela estará acessível em 'http://localhost:3001/uploads/images/nome-da-imagem.jpg'
-// O '/static' é opcional, se omitido, o caminho seria direto: '/uploads/images/...'
-// Usarei '/static' para deixar claro que são arquivos estáticos, mas você pode remover se preferir.
-// app.use('/static', express.static(path.join(__dirname, 'public')));
-// VOU OPTAR POR NÃO USAR /static no prefixo da URL para simplificar a URL final da imagem
-app.use(express.static(path.join(__dirname, 'public'))); // Ex: http://localhost:3001/uploads/images/nome.jpg
-
-// Rotas
-app.use('/', allRoutes); // Monta todas as rotas da API
-
-// Rota de Teste
-app.get('/', (req, res) => {
-  res.send('Servidor do Blog Famosos na Mídia está no ar!');
-});
-
-// Middleware de Tratamento de Erros Genérico
-app.use((err, req, res, next) => {
-  console.error("ERRO NÃO TRATADO:", err.stack);
-  if (err.name === 'MulterError') { // Tratamento específico para erros do Multer
-    return res.status(400).json({ message: `Erro de upload: ${err.message}. Código: ${err.code}` });
-  }
-  res.status(500).json({ message: 'Ocorreu um erro inesperado no servidor.' });
-});
-
+// Função para sincronizar o banco de dados (chamada única no startup)
 const syncDatabase = async () => {
   try {
-    await db.sequelize.sync();
-    console.log('Banco de dados sincronizado com sucesso.');
+    // { alter: true } tenta ajustar o schema sem apagar dados (útil em dev, mas pode ser lento/arriscado)
+    // { force: true } apaga e recria as tabelas (SÓ USE EM DEV E COM CUIDADO)
+    // Sem opções, ele tenta criar as tabelas se não existirem.
+    // O erro de UniqueConstraint indica que as tabelas já existem.
+    // Em produção, você usaria migrations (npx sequelize-cli db:migrate) antes de rodar o servidor.
+    // Para este caso específico do erro "categories_id_seq already exists",
+    // rodar `sync()` sem force/alter em um DB existente pode gerar esse erro se o Sequelize
+    // tentar criar a sequência novamente. Isso geralmente não é fatal, mas é um sintoma
+    // de usar `sync()` em vez de migrations em um DB que não está vazio.
+    // Para seguir usando sync em dev, a opção `alter: true` pode ajudar, mas não resolve todos os casos.
+    // Vou manter a chamada simples `sync()` que estava lá, mas adicionar tratamento de erro para permitir continuar.
+    
+    await db.sequelize.sync(); 
+    console.log('Banco de dados sincronizado com sucesso (via server.js).');
+
   } catch (error) {
     console.error('Erro ao sincronizar o banco de dados:', error);
+    // Tratar o erro de unique constraint (tabelas já existem) como aviso em dev, não fatal
+    if (error.name === 'SequelizeUniqueConstraintError' || (error.parent && error.parent.code === '23505')) {
+        console.warn("Aviso: Erro de sincronização detectado (tabelas/sequências podem já existir). Continuando...");
+    } else {
+        console.error("ERRO CRÍTICO AO SINCRONIZAR BANCO DE DADOS. Considerar encerrar o processo.", error);
+        // Em produção, você pode querer encerrar o processo aqui:
+        // process.exit(1); 
+    }
   }
 };
 
-syncDatabase();
 
-const PORT = configModule.port || 3001;
-app.listen(PORT, async () => {
-  console.log(`Servidor rodando na porta ${PORT} no ambiente ${configModule.nodeEnv}`);
-  await syncDatabase();
-});
+// Inicia a sincronização do banco de dados e, APÓS isso, inicia o servidor
+// Usar IIFE assíncrona para executar sync antes de listen
+(async () => {
+  // await syncDatabase(); // Sincroniza antes de iniciar o servidor
+                         // Note: Se o sync levar muito tempo ou falhar criticamente, o listen não rodará.
+                         // Dependendo da estratégia (migrations vs sync), pode-se optar por não sincronizar aqui.
+                         // Como o log mostra erro de sync, vamos mantê-lo para fins de depuração,
+                         // mas lembre-se da recomendação de migrations para prod.
+                         
+  // Para o contexto de corrigir a dupla inicialização e o sync no app.js,
+  // vamos mover a chamada syncDatabase PARA cá e garantir que é chamada apenas uma vez.
+  await syncDatabase(); // <<< Única chamada de syncDatabase()
 
-module.exports = app;
+  app.listen(PORT, () => {
+    console.log(`Servidor rodando na porta ${PORT}`);
+    // console.log(`Ambiente: ${process.env.NODE_ENV}`); // NODE_ENV já é logado via configModule
+    console.log(`Ambiente: ${config.nodeEnv}`); // Usa a configuração carregada
 
+    // O log 'Servidor rodando na porta 80 no ambiente development' no erro original
+    // indica que talvez outro processo ou configuração esteja tentando rodar algo na porta 80
+    // ou que uma configuração antiga esteja ativa. Verifique onde mais o servidor pode estar sendo iniciado.
 
+  });
+
+})(); // Executa a função assíncrona imediatamente

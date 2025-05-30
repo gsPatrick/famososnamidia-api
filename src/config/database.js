@@ -1,19 +1,36 @@
 // src/config/database.js
 const { Sequelize } = require('sequelize');
-require('dotenv').config(); // Para carregar variáveis de .env
+// Garante que dotenv foi carregado ANTES que este arquivo seja 'required'
+// Adicionar a chamada dotenv.config() aqui TAMBÉM, embora app.js já faça,
+// garante que este módulo tenha acesso às variáveis caso seja required
+// antes de app.js em algum cenário futuro. No seu caso, app.js carrega dotenv primeiro.
+require('dotenv').config(); 
+
+// Importa as configurações específicas para o ambiente atual
+const env = process.env.NODE_ENV || 'development';
+const currentConfig = require('./config')[env];
+
+// Verifica se as configurações de DB foram carregadas corretamente
+if (!currentConfig || !currentConfig.dbName || !currentConfig.dbUser || !currentConfig.dbHost) {
+  console.error("ERRO FATAL: Configurações de banco de dados incompletas para o ambiente", env);
+  // Em um sistema robusto, você provavelmente encerraria o processo aqui
+  // process.exit(1); 
+}
 
 const sequelize = new Sequelize(
-  process.env.DB_NAME,
-  process.env.DB_USER,
-  process.env.DB_PASSWORD,
+  currentConfig.dbName,
+  currentConfig.dbUser,
+  currentConfig.dbPassword,
   {
-    host: process.env.DB_HOST,
-    dialect: 'postgres', // Ou o dialeto do seu banco
-    port: process.env.DB_PORT || 5432,
-    logging: process.env.NODE_ENV === 'development' ? console.log : false, // Log SQL em dev
-    // dialectOptions: {
-    //   ssl: process.env.DB_SSL === 'true' ? { require: true, rejectUnauthorized: false } : false,
-    // },
+    host: currentConfig.dbHost,
+    dialect: currentConfig.dbDialect, 
+    port: currentConfig.dbPort,
+    // Logging apenas em desenvolvimento
+    logging: currentConfig.nodeEnv === 'development' ? console.log : false, 
+    // Configuração SSL (ajuste conforme sua necessidade de produção)
+    dialectOptions: {
+      ssl: currentConfig.dbSsl ? { require: true, rejectUnauthorized: false } : false, // Exemplo para cert. auto-assinados
+    },
     pool: {
       max: 5,
       min: 0,
@@ -27,7 +44,7 @@ const sequelize = new Sequelize(
   }
 );
 
-// Testar a conexão
+// Testar a conexão (opcional, pode ser útil no server.js antes de sync)
 // async function testConnection() {
 //   try {
 //     await sequelize.authenticate();
@@ -36,6 +53,6 @@ const sequelize = new Sequelize(
 //     console.error('Unable to connect to the database:', error);
 //   }
 // }
-// testConnection();
+// testConnection(); // Comentar ou remover em produção se não for necessário a cada startup
 
 module.exports = sequelize;
