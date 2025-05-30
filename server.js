@@ -2,7 +2,7 @@
 // Este arquivo deve ser o ÚNICO ponto de inicialização do servidor Express
 // IMPORTANTE: O caminho para './app' deve ser relativo a ESTE arquivo (server.js)
 // Se server.js está em src/ e app.js está em src/, o caminho correto é '../app'
-const app = require('../app'); // <<< CORREÇÃO AQUI: Ajuste o caminho para '../app'
+const app = require('./app'); // <<< CORREÇÃO AQUI: Ajuste o caminho para '../app'
 
 const db = require('./src/models'); // Importa o módulo de modelos para acesso ao sequelize
 const config = require('./src/config/config'); // Importa as configurações

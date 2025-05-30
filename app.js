@@ -2,9 +2,9 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const allRoutes = require('./routes/index.routes'); // Ajuste o caminho se sua pasta src estiver em outro nível (parece correto)
+const allRoutes = require('./src/routes/index.routes'); // Ajuste o caminho se sua pasta src estiver em outro nível (parece correto)
 // const db = require('./models'); // Ajuste o caminho (importado apenas em server.js agora)
-const configModule = require('./config/config'); // Renomeado para evitar conflito com a variável 'config'
+const configModule = require('./src/config/config'); // Renomeado para evitar conflito com a variável 'config'
 const path = require('path');
 
 // Carrega variáveis de .env para process.env - Deve ser feito ANTES de carregar módulos que dependem delas
