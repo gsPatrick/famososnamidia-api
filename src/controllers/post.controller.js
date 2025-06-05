@@ -14,17 +14,45 @@ const createPost = async (req, res) => {
 const getAllPosts = async (req, res) => {
   try {
     const { page, limit, search, categorySlug, status, sortBy, sortOrder } = req.query;
-    // Para rotas públicas, geralmente queremos apenas 'published'
-    // Para dashboard, o admin pode querer ver 'all' status
-    const postStatus = req.path.includes('/dashboard') ? status : 'published';
+    let effectiveStatus = status; // Começa com o status da query string
 
-    const result = await postService.getAllPosts({ page, limit, search, categorySlug, status: postStatus, sortBy, sortOrder });
+    // Verifica se a rota atual é a rota pública de posts (não a do dashboard)
+    // A rota pública é /api/v1/posts (ou similar, dependendo do prefixo em index.routes.js)
+    // A rota do dashboard é /api/v1/posts/dashboard/all
+    // Se req.originalUrl for usado, ele contém o caminho completo.
+    // req.path é relativo à montagem do router.
+    // Para ser mais seguro, podemos verificar se NÃO é a rota específica do dashboard.
+    // Vamos assumir que `index.routes.js` monta `postRoutes` em `/posts`.
+    // Então, para `GET /posts/dashboard/all`, `req.path` dentro de `postRoutes` será `/dashboard/all`.
+    // Para `GET /posts`, `req.path` dentro de `postRoutes` será `/`.
+
+    if (req.path !== '/dashboard/all') {
+      // Se não for a rota específica do dashboard, força para 'published'
+      // independentemente do que 'status' na query possa dizer.
+      effectiveStatus = 'published';
+    }
+    // Se for a rota '/dashboard/all', `effectiveStatus` manterá o valor de `status`
+    // da query (que o frontend envia como 'all').
+    // O serviço precisará interpretar 'all' ou undefined/null status como "sem filtro de status".
+
+    // console.log(`[PostController] Path: ${req.path}, Original Query Status: ${status}, Effective Status: ${effectiveStatus}`);
+
+    const result = await postService.getAllPosts({
+      page,
+      limit,
+      search,
+      categorySlug,
+      status: effectiveStatus, // Passa o status determinado para o serviço
+      sortBy,
+      sortOrder,
+    });
     res.status(200).json(result);
   } catch (error) {
-    console.error("Erro ao buscar posts:", error);
+    console.error("Erro ao buscar posts no controller:", error);
     res.status(500).json({ message: "Erro ao buscar posts." });
   }
 };
+
 
 const getPost = async (req, res) => {
   try {

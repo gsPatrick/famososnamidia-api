@@ -19,60 +19,79 @@ const createPost = async (postData, authorId) => {
   }
 };
 
-const getAllPosts = async ({ page = 1, limit = 10, search = '', categorySlug = null, status = 'published', sortBy = 'publishedAt', sortOrder = 'DESC' }) => {
-  try {
-    const offset = (page - 1) * limit;
-    let whereClause = { status }; // Por padrão, busca apenas posts publicados
-    
-    if (status === 'all') { // Permitir buscar todos os status (para dashboard)
-        delete whereClause.status;
-    }
+const getAllPosts = async (options = {}) => {
+  const page = parseInt(options.page, 10) || 1;
+  const limit = parseInt(options.limit, 10) || 10;
+  const offset = (page - 1) * limit;
 
+  const whereClause = {};
+  const includeClause = [
+    { model: User, as: 'author', attributes: ['id', 'name'] }, // Inclui autor
+    { model: Category, as: 'category', attributes: ['id', 'name', 'slug'] }, // Inclui categoria
+  ];
 
-    if (search) {
-      whereClause[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { excerpt: { [Op.iLike]: `%${search}%` } },
-        { content: { [Op.iLike]: `%${search}%` } },
-      ];
-    }
-
-    let includeOptions = [
-      { model: User, as: 'author', attributes: ['id', 'name'] }, // Inclui autor, exclui senha
-      { model: Category, as: 'category', attributes: ['id', 'name', 'slug'] },
+  // Filtro por termo de busca (título ou excerto)
+  if (options.search) {
+    whereClause[Op.or] = [
+      { title: { [Op.iLike]: `%${options.search}%` } },
+      { excerpt: { [Op.iLike]: `%${options.search}%` } },
     ];
+  }
 
-    if (categorySlug) {
-      // Busca a categoria pelo slug para obter o ID
-      const category = await Category.findOne({ where: { slug: categorySlug } });
-      if (category) {
-        whereClause.categoryId = category.id;
-      } else {
-        // Se a categoria não existir, retorna array vazio ou lança erro
-        return { totalItems: 0, posts: [], totalPages: 0, currentPage: parseInt(page,10) };
-      }
+  // Filtro por slug da categoria
+  if (options.categorySlug) {
+    // Precisamos buscar o ID da categoria pelo slug
+    const category = await Category.findOne({ where: { slug: options.categorySlug } });
+    if (category) {
+      whereClause.categoryId = category.id;
+    } else {
+      // Se a categoria não existe, retorna zero posts para essa categoria
+      return { posts: [], totalItems: 0, totalPages: 0, currentPage: page };
     }
-    
-    const validSortOrders = ['ASC', 'DESC'];
-    const orderDirection = validSortOrders.includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
-    
-    let orderClause = [[sortBy, orderDirection]];
-    if (sortBy === 'createdAt' && !['publishedAt', 'updatedAt'].includes(sortBy)) { // Evita duplicidade se sortBy for createdAt
-        orderClause.push(['id', orderDirection]); // Ordenação secundária para consistência
+  }
+
+  // Filtro por status
+  // Se options.status for 'all', undefined, ou uma string vazia, não aplicamos filtro de status.
+  // Caso contrário, filtramos pelo status fornecido.
+  if (options.status && options.status !== 'all' && options.status !== '') {
+    whereClause.status = options.status;
+  }
+  // console.log(`[PostService] Fetching posts with whereClause:`, whereClause);
+
+
+  // Ordenação
+  const order = [];
+  if (options.sortBy && options.sortOrder) {
+    // Validar sortBy para evitar injeção (opcional, mas bom)
+    const allowedSortBy = ['title', 'createdAt', 'publishedAt', 'status'];
+    if (allowedSortBy.includes(options.sortBy)) {
+      order.push([options.sortBy, options.sortOrder.toUpperCase() === 'DESC' ? 'DESC' : 'ASC']);
+    } else {
+      order.push(['createdAt', 'DESC']); // Padrão se sortBy for inválido
     }
+  } else {
+    order.push(['createdAt', 'DESC']); // Ordenação padrão
+  }
 
-
+  try {
     const { count, rows } = await Post.findAndCountAll({
       where: whereClause,
-      include: includeOptions,
-      limit: parseInt(limit, 10),
-      offset: parseInt(offset, 10),
-      order: orderClause,
-      distinct: true, // Importante para count correto com includes
+      include: includeClause,
+      limit,
+      offset,
+      order,
+      distinct: true, // Necessário para count correto com includes N:M, mas aqui é 1:N então pode não ser crucial.
     });
-    return { totalItems: count, posts: rows, totalPages: Math.ceil(count / limit), currentPage: parseInt(page, 10) };
+
+    return {
+      posts: rows,
+      totalItems: count,
+      totalPages: Math.ceil(count / limit),
+      currentPage: page,
+    };
   } catch (error) {
-    throw error;
+    console.error("Erro ao buscar posts no serviço:", error);
+    throw new Error(error.message || 'Não foi possível buscar os posts.');
   }
 };
 
